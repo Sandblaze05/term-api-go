@@ -11,7 +11,7 @@ import (
 	lipgloss "github.com/charmbracelet/lipgloss"
 )
 
-const FOCUSABLES = 2
+const FOCUSABLES = 3
 
 // Global request data structure
 type RequestData struct {
@@ -29,6 +29,7 @@ type model struct {
 	selectedMethod string
 	focusIndex     int
 	requestData    *RequestData
+	activeTab      int // 0=Params 1=Auth 2=Headers 3=Body
 }
 
 type item string
@@ -60,18 +61,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focusIndex != 1 {
 				return m, tea.Quit
 			}
+		case "m":
+			if m.focusIndex != 1 {
+				m.focusIndex = 0
+				m.showMethods = true
+			}
+		case "u":
+			if m.showMethods {
+				m.showMethods = false
+			}
+			if m.focusIndex != 1 {
+				m.focusIndex = 1
+				m.urlInput.Focus()
+			}
 		case "tab":
 			if m.showMethods {
 				m.showMethods = false
 			} else {
-				m.focusIndex = (m.focusIndex + 1) % FOCUSABLES
-				if m.focusIndex == 0 {
-					m.urlInput.Blur()
-					m.showMethods = true
-					m.requestData.URL = m.urlInput.Value()
-				} else if m.focusIndex == 1 {
-					m.urlInput.Focus()
-					m.showMethods = false
+				if m.focusIndex == 2 {
+					m.activeTab = (m.activeTab + 1) % 4
+				} else {
+					m.focusIndex = (m.focusIndex + 1) % FOCUSABLES
+					if m.focusIndex == 0 {
+						m.urlInput.Blur()
+						m.showMethods = true
+						m.requestData.URL = m.urlInput.Value()
+					} else if m.focusIndex == 1 {
+						m.urlInput.Focus()
+						m.showMethods = false
+					} else if m.focusIndex == 2 {
+						m.urlInput.Blur()
+					}
 				}
 			}
 		case "enter":
@@ -92,7 +112,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.showMethods {
 		m.methods, cmd = m.methods.Update(msg)
-	} else {
+	} else if m.focusIndex == 1 {
 		m.urlInput, cmd = m.urlInput.Update(msg)
 		m.requestData.URL = m.urlInput.Value()
 	}
@@ -154,14 +174,59 @@ func (m model) View() string {
 
 	requestBar := lipgloss.JoinHorizontal(lipgloss.Top, methodBox, urlBox)
 
+	// Tabs
+	tabs := []string{"Params", "Auth", "Headers", "Body"}
+	var tabStrings []string
+
+	for i, tab := range tabs {
+		style := lipgloss.NewStyle().Padding(0, 2)
+		if i == m.activeTab {
+			style = style.
+				Bold(true).
+				Foreground(lipgloss.Color("205")).
+				Underline(true)
+		} else {
+			style = style.Foreground(lipgloss.Color("#84FFFF"))
+		}
+		tabStrings = append(tabStrings, style.Render(tab))
+
+	}
+
+	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, tabStrings...)
+
+	tabBorderColor := lipgloss.Color("#84FFFF")
+	if m.focusIndex == 2 {
+		tabBorderColor = lipgloss.Color("205")
+	}
+
+	tabContent := ""
+	switch m.activeTab {
+	case 0:
+		tabContent = "Query Parameters"
+	case 1:
+		tabContent = "Authentication"
+	case 2:
+		tabContent = "Headers"
+	case 3:
+		tabContent = "Body"
+	}
+
+	tabBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(tabBorderColor).
+		Width(m.width-8).
+		Height(m.height-14).
+		Padding(0, 1).
+		Render(lipgloss.JoinVertical(lipgloss.Left, tabBar, "", tabContent))
+
 	// Debug Info
-	debugInfo := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Padding(1, 1).
-		Render(fmt.Sprintf("DEBUG | Method: %s | URL: %s", m.requestData.Method, m.requestData.URL))
+	// debugInfo := lipgloss.NewStyle().
+	// 	Foreground(lipgloss.Color("241")).
+	// 	Padding(1, 1).
+	// 	Render(fmt.Sprintf("DEBUG | Method: %s | URL: %s", m.requestData.Method, m.requestData.URL))
 
 	// Combine Everything
-	content := lipgloss.JoinVertical(lipgloss.Left, header, requestBar, debugInfo)
+	content := lipgloss.JoinVertical(lipgloss.Left, header, requestBar, "", tabBox)
 
 	outer := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -206,6 +271,7 @@ func main() {
 		showMethods:    false,
 		focusIndex:     1,
 		requestData:    requestData,
+		activeTab:      0,
 	}
 
 	p := tea.NewProgram(initialModel)
