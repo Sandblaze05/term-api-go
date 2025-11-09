@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	list "github.com/charmbracelet/bubbles/list"
-	textInput "github.com/charmbracelet/bubbles/textinput"
+	textArea "github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	lipgloss "github.com/charmbracelet/lipgloss"
 )
@@ -25,11 +25,16 @@ type model struct {
 	width, height  int
 	showMethods    bool
 	methods        list.Model
-	urlInput       textInput.Model
+	urlInput       textArea.Model
 	selectedMethod string
 	focusIndex     int
 	requestData    *RequestData
 	activeTab      int // 0=Params 1=Auth 2=Headers 3=Body
+	insertMode     bool
+	paramsInput    textArea.Model
+	authInput      textArea.Model
+	headersInput   textArea.Model
+	bodyInput      textArea.Model
 }
 
 type item string
@@ -49,17 +54,70 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
 		m.methods.SetWidth(15)
 		m.methods.SetHeight(3)
-		m.urlInput.Width = m.width - 25
+
+		m.urlInput.SetWidth(m.width - 25)
+		m.urlInput.SetHeight(3)
+
+		m.paramsInput.SetHeight(m.height - 20)
+		m.paramsInput.SetWidth(m.width - 12)
+
+		m.authInput.SetHeight(m.height - 20)
+		m.authInput.SetWidth(m.width - 12)
+
+		m.headersInput.SetHeight(m.height - 20)
+		m.headersInput.SetWidth(m.width - 12)
+
+		m.bodyInput.SetHeight(m.height - 20)
+		m.bodyInput.SetWidth(m.width - 12)
 
 	case tea.KeyMsg:
+
+		if m.insertMode && msg.String() == "esc" { // exit insert
+			m.insertMode = false
+			m.paramsInput.Blur()
+			m.authInput.Blur()
+			m.headersInput.Blur()
+			m.bodyInput.Blur()
+			return m, nil
+		}
+
+		if m.insertMode { // handle insert mode
+			switch m.activeTab {
+			case 0:
+				m.paramsInput, cmd = m.paramsInput.Update(msg)
+			case 1:
+				m.authInput, cmd = m.authInput.Update(msg)
+			case 2:
+				m.headersInput, cmd = m.headersInput.Update(msg)
+			case 3:
+				m.bodyInput, cmd = m.bodyInput.Update(msg)
+			}
+			return m, cmd
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
 			if m.focusIndex != 1 {
 				return m, tea.Quit
+			}
+		case "i":
+			if m.focusIndex == 2 {
+				m.insertMode = true
+				switch m.activeTab {
+				case 0:
+					m.paramsInput.Focus()
+				case 1:
+					m.authInput.Focus()
+				case 2:
+					m.headersInput.Focus()
+				case 3:
+					m.bodyInput.Focus()
+				}
 			}
 		case "m":
 			if m.focusIndex != 1 {
@@ -79,7 +137,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showMethods = false
 			} else {
 				if m.focusIndex == 2 {
-					m.activeTab = (m.activeTab + 1) % 4
+					m.activeTab = (m.activeTab + 1) % 4 // cycle between tabs
 				} else {
 					m.focusIndex = (m.focusIndex + 1) % FOCUSABLES
 					if m.focusIndex == 0 {
@@ -200,15 +258,52 @@ func (m model) View() string {
 	}
 
 	tabContent := ""
+	modeIndicator := ""
+	if m.insertMode {
+		modeIndicator = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205")).
+			Bold(true).
+			Render("--INSERT--")
+	} else {
+		modeIndicator = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7d7d7dff")).
+			Bold(true).
+			Render("--NORMAL--")
+	}
+
 	switch m.activeTab {
 	case 0:
-		tabContent = "Query Parameters"
+		tabContent = lipgloss.JoinVertical(lipgloss.Left,
+			"Query Parameters:",
+			"",
+			m.paramsInput.View(),
+			"",
+			modeIndicator,
+		)
 	case 1:
-		tabContent = "Authentication"
+		tabContent = lipgloss.JoinVertical(lipgloss.Left,
+			"Authentication:",
+			"",
+			m.authInput.View(),
+			"",
+			modeIndicator,
+		)
 	case 2:
-		tabContent = "Headers"
+		tabContent = lipgloss.JoinVertical(lipgloss.Left,
+			"Headers:",
+			"",
+			m.headersInput.View(),
+			"",
+			modeIndicator,
+		)
 	case 3:
-		tabContent = "Body"
+		tabContent = lipgloss.JoinVertical(lipgloss.Left,
+			"Body:",
+			"",
+			m.bodyInput.View(),
+			"",
+			modeIndicator,
+		)
 	}
 
 	tabBox := lipgloss.NewStyle().
@@ -253,9 +348,23 @@ func main() {
 	methodsList.SetShowHelp(false)
 	methodsList.SetShowStatusBar(false)
 
-	ti := textInput.New()
+	ti := textArea.New()
 	ti.Placeholder = "Enter URL..."
+	ti.ShowLineNumbers = false
+	// ti.SetHeight(1)
 	ti.Focus()
+
+	paramsInput := textArea.New()
+	paramsInput.Placeholder = "key=value"
+
+	authInput := textArea.New()
+	authInput.Placeholder = "Bearer token or username:password"
+
+	headersInput := textArea.New()
+	headersInput.Placeholder = "Content-Type: application/json"
+
+	bodyInput := textArea.New()
+	bodyInput.Placeholder = "Request body..."
 
 	requestData := &RequestData{
 		Method:  "GET",
@@ -272,6 +381,11 @@ func main() {
 		focusIndex:     1,
 		requestData:    requestData,
 		activeTab:      0,
+		insertMode:     false,
+		paramsInput:    paramsInput,
+		authInput:      authInput,
+		headersInput:   headersInput,
+		bodyInput:      bodyInput,
 	}
 
 	p := tea.NewProgram(initialModel)
