@@ -17,7 +17,9 @@ const FOCUSABLES = 3
 type RequestData struct {
 	Method  string
 	URL     string
-	Headers map[string]string
+	Params  string
+	Auth    string
+	Headers string
 	Body    string
 }
 
@@ -29,12 +31,20 @@ type model struct {
 	selectedMethod string
 	focusIndex     int
 	requestData    *RequestData
-	activeTab      int // 0=Params 1=Auth 2=Headers 3=Body
+	activeTab      int // 0=Params 1=Auth 2=Headers 3=Body 4=Response
 	insertMode     bool
 	paramsInput    textArea.Model
 	authInput      textArea.Model
 	headersInput   textArea.Model
 	bodyInput      textArea.Model
+	responseArea   textArea.Model
+}
+
+func (m *model) saveTabContent() {
+	m.requestData.Params = m.paramsInput.Value()
+	m.requestData.Auth = m.authInput.Value()
+	m.requestData.Headers = m.headersInput.Value()
+	m.requestData.Body = m.bodyInput.Value()
 }
 
 type item string
@@ -73,6 +83,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bodyInput.SetHeight(m.height - 20)
 		m.bodyInput.SetWidth(m.width - 12)
 
+		m.responseArea.SetHeight(m.height - 20)
+		m.responseArea.SetWidth(m.width - 12)
+
 	case tea.KeyMsg:
 
 		if m.insertMode && msg.String() == "esc" { // exit insert
@@ -81,6 +94,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.authInput.Blur()
 			m.headersInput.Blur()
 			m.bodyInput.Blur()
+			m.responseArea.Blur()
 			return m, nil
 		}
 
@@ -94,6 +108,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.headersInput, cmd = m.headersInput.Update(msg)
 			case 3:
 				m.bodyInput, cmd = m.bodyInput.Update(msg)
+			case 4:
+				m.responseArea, cmd = m.responseArea.Update(msg)
 			}
 			return m, cmd
 		}
@@ -117,6 +133,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.headersInput.Focus()
 				case 3:
 					m.bodyInput.Focus()
+				case 4:
+					m.responseArea.Focus()
 				}
 			}
 		case "m":
@@ -137,7 +155,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showMethods = false
 			} else {
 				if m.focusIndex == 2 {
-					m.activeTab = (m.activeTab + 1) % 4 // cycle between tabs
+					m.saveTabContent()
+					m.activeTab = (m.activeTab + 1) % 5 // cycle between tabs
 				} else {
 					m.focusIndex = (m.focusIndex + 1) % FOCUSABLES
 					if m.focusIndex == 0 {
@@ -163,8 +182,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.focusIndex = 1
 				m.urlInput.Focus()
 			}
-		case "ctrl+enter":
-			fmt.Println()
+		case "e":
+			if m.focusIndex != 1 {
+				m.saveTabContent()
+
+				response, err := executeHttpRequest(m.requestData)
+				if err != nil {
+					m.responseArea.SetValue(fmt.Sprintf("Error: %v", err))
+				} else {
+					m.responseArea.SetValue(response)
+				}
+				m.activeTab = 4
+			}
 		}
 	}
 
@@ -233,7 +262,7 @@ func (m model) View() string {
 	requestBar := lipgloss.JoinHorizontal(lipgloss.Top, methodBox, urlBox)
 
 	// Tabs
-	tabs := []string{"Params", "Auth", "Headers", "Body"}
+	tabs := []string{"Params", "Auth", "Headers", "Body", "Response"}
 	var tabStrings []string
 
 	for i, tab := range tabs {
@@ -304,6 +333,14 @@ func (m model) View() string {
 			"",
 			modeIndicator,
 		)
+	case 4:
+		tabContent = lipgloss.JoinVertical(lipgloss.Left,
+			"Response:",
+			"",
+			m.responseArea.View(),
+			"",
+			modeIndicator,
+		)
 	}
 
 	tabBox := lipgloss.NewStyle().
@@ -366,10 +403,15 @@ func main() {
 	bodyInput := textArea.New()
 	bodyInput.Placeholder = "Request body..."
 
+	responseArea := textArea.New()
+	responseArea.Placeholder = "Response from the request shows here."
+
 	requestData := &RequestData{
 		Method:  "GET",
 		URL:     "",
-		Headers: make(map[string]string),
+		Params:  "",
+		Auth:    "",
+		Headers: "",
 		Body:    "",
 	}
 
@@ -386,6 +428,7 @@ func main() {
 		authInput:      authInput,
 		headersInput:   headersInput,
 		bodyInput:      bodyInput,
+		responseArea:   responseArea,
 	}
 
 	p := tea.NewProgram(initialModel)
